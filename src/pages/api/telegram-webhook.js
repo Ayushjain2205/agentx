@@ -7,8 +7,6 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 console.log("Starting bot...");
-console.log("BOT_TOKEN set:", !!BOT_TOKEN);
-console.log("OPENAI_API_KEY set:", !!OPENAI_API_KEY);
 
 if (!BOT_TOKEN || !OPENAI_API_KEY) {
   console.error(
@@ -60,21 +58,32 @@ function escapeMarkdown(text) {
 async function handleStartCommand(chatId) {
   console.log(`Handling /start command for chat ID: ${chatId}`);
   const wallet = ethers.Wallet.createRandom();
-  const message = `
-Welcome to the AI-powered Web3 bot!
 
-A new Ethereum wallet has been created:
+  const message = `
+🎉 Welcome to the AI-powered Web3 bot!
+
+✅ A new Ethereum wallet has been created for you:
 
 *Address:* \`${wallet.address}\`
 
-*Private Key:* \`${wallet.privateKey}\`
-
-*IMPORTANT:* Never share your private key with anyone. Store it securely.
-
-How can I assist you today?
+What would you like to do next?
   `;
 
-  await sendTelegramMessage(chatId, message);
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: "🔑 Show Private Key", callback_data: "show_key" },
+        { text: "🗑️ Delete Wallet", callback_data: "delete_wallet" },
+      ],
+    ],
+  };
+
+  await sendTelegramMessage(chatId, message, keyboard);
+
+  // Store the wallet information securely (e.g., in a database)
+  // This is just a placeholder - implement secure storage in production
+  global.userWallets = global.userWallets || {};
+  global.userWallets[chatId] = wallet;
 }
 
 async function handleDockCommand(chatId) {
@@ -84,7 +93,7 @@ async function handleDockCommand(chatId) {
       [
         {
           text: "Open Mini App",
-          web_app: { url: "https://6853-137-59-187-215.ngrok-free.app" },
+          web_app: { url: " https://6853-137-59-187-215.ngrok-free.app" },
         },
       ],
     ],
@@ -190,14 +199,41 @@ export default async function handler(req, res) {
           const selectedChain = data.split(":")[1];
           const responseText = `Chain set to: *${availableChains[selectedChain]}*`;
           await sendTelegramMessage(chatId, responseText);
+        } else if (data === "show_key") {
+          const wallet = global.userWallets[chatId];
+          if (wallet) {
+            const keyMessage = `
+🔐 Here's your private key:
 
-          await axios.post(
-            `https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,
-            {
-              callback_query_id: callbackQuery.id,
-            }
-          );
+\`${wallet.privateKey}\`
+
+⚠️ *IMPORTANT:* Never share your private key with anyone. Store it securely.
+            `;
+            await sendTelegramMessage(chatId, keyMessage);
+          } else {
+            await sendTelegramMessage(
+              chatId,
+              "❌ No wallet found. Please start over with /start"
+            );
+          }
+        } else if (data === "delete_wallet") {
+          if (global.userWallets[chatId]) {
+            delete global.userWallets[chatId];
+            await sendTelegramMessage(
+              chatId,
+              "🗑️ Your wallet has been deleted. Use /start to create a new one."
+            );
+          } else {
+            await sendTelegramMessage(chatId, "❌ No wallet found to delete.");
+          }
         }
+
+        await axios.post(
+          `https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,
+          {
+            callback_query_id: callbackQuery.id,
+          }
+        );
       }
 
       res.status(200).json({ message: "OK" });
