@@ -17,7 +17,6 @@ const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
 
-// Updated availableChains object with new options
 const availableChains = {
   ethereum: "Ethereum",
   polygon: "Polygon",
@@ -25,7 +24,6 @@ const availableChains = {
   airdao: "AirDAO",
 };
 
-// Modified function to handle /setchain command
 async function handleSetChainCommand(chatId) {
   const keyboard = {
     inline_keyboard: Object.entries(availableChains).map(([key, value]) => [
@@ -38,12 +36,12 @@ async function handleSetChainCommand(chatId) {
   await sendTelegramMessage(chatId, message, keyboard);
 }
 
-// Updated function to send Telegram messages with optional inline keyboard
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
   try {
     const payload = {
       chat_id: chatId,
       text: text,
+      parse_mode: "MarkdownV2",
     };
 
     if (replyMarkup) {
@@ -63,13 +61,79 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
   }
 }
 
+function escapeMarkdown(text) {
+  const escapeCharacters = "_*[]()~`>#+-=|{}.!";
+  let escapedText = "";
+  let inCodeBlock = false;
+
+  for (let i = 0; i < text.length; i++) {
+    if (text.substr(i, 3) === "```") {
+      inCodeBlock = !inCodeBlock;
+      escapedText += "```";
+      i += 2;
+    } else if (!inCodeBlock && escapeCharacters.includes(text[i])) {
+      escapedText += "\\" + text[i];
+    } else {
+      escapedText += text[i];
+    }
+  }
+
+  return escapedText;
+}
+
+async function getCryptoPrice(cryptoId) {
+  try {
+    const response = await axios.get(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${cryptoId}&vs_currencies=usd`
+    );
+    const price = response.data[cryptoId].usd;
+    return `The current price of ${cryptoId} is $${price}`;
+  } catch (error) {
+    console.error("Error fetching crypto price:", error);
+    return "Sorry, I couldn't fetch the crypto price at the moment.";
+  }
+}
+
 async function getAIResponse(message) {
   try {
+    const functions = [
+      {
+        name: "get_crypto_price",
+        description: "Get the current price of a cryptocurrency",
+        parameters: {
+          type: "object",
+          properties: {
+            crypto_id: {
+              type: "string",
+              description:
+                "The ID of the cryptocurrency (e.g., bitcoin, ethereum)",
+            },
+          },
+          required: ["crypto_id"],
+        },
+      },
+    ];
+
     const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
+      model: "gpt-4",
       messages: [{ role: "user", content: message }],
+      functions: functions,
+      function_call: "auto",
     });
-    return completion.choices[0].message.content;
+
+    const responseMessage = completion.choices[0].message;
+
+    if (responseMessage.function_call) {
+      const functionName = responseMessage.function_call.name;
+      const functionArgs = JSON.parse(responseMessage.function_call.arguments);
+
+      if (functionName === "get_crypto_price") {
+        const cryptoPrice = await getCryptoPrice(functionArgs.crypto_id);
+        return cryptoPrice;
+      }
+    }
+
+    return responseMessage.content;
   } catch (error) {
     console.error("Error getting AI response:", error);
     return "Sorry, I'm having trouble processing your request right now.";
@@ -88,29 +152,29 @@ export default async function handler(req, res) {
       let responseText;
       if (messageText.toLowerCase() === "/start") {
         responseText =
-          "Welcome to the AI-powered bot! How can I help you today?";
+          "Welcome to the AI\\-powered bot\\! How can I help you today?";
       } else if (messageText.toLowerCase() === "/setchain") {
         await handleSetChainCommand(chatId);
         res.status(200).json({ message: "OK" });
         return;
       } else {
-        // Get AI-generated response
         responseText = await getAIResponse(messageText);
+        responseText = escapeMarkdown(responseText);
       }
 
       await sendTelegramMessage(chatId, responseText);
     } else if (update.callback_query) {
-      // Handle callback queries from inline keyboard
       const callbackQuery = update.callback_query;
       const chatId = callbackQuery.message.chat.id;
       const data = callbackQuery.data;
 
       if (data.startsWith("chain:")) {
         const selectedChain = data.split(":")[1];
-        const responseText = `Chain set to: ${availableChains[selectedChain]}`;
+        const responseText = escapeMarkdown(
+          `Chain set to: ${availableChains[selectedChain]}`
+        );
         await sendTelegramMessage(chatId, responseText);
 
-        // Acknowledge the callback query
         await axios.post(
           `https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,
           {
