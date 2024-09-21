@@ -1,0 +1,20 @@
+# Node modules for Next.js
+agent-x-web/node_modules/
+
+# Next.js build output
+agent-x-web/.next/
+
+# Python virtual environment
+telegram-bot/venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# Environment variables
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
