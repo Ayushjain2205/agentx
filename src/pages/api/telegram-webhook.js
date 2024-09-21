@@ -12,7 +12,10 @@ if (!BOT_TOKEN || !OPENAI_API_KEY) {
   process.exit(1);
 }
 
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+const openai = new OpenAI({
+  baseURL: "https://api.red-pill.ai/v1",
+  apiKey: OPENAI_API_KEY,
+});
 
 async function sendTelegramMessage(chatId, text) {
   try {
