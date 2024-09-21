@@ -1,5 +1,6 @@
 import axios from "axios";
 import OpenAI from "openai";
+import { ethers } from "ethers";
 
 // Load environment variables
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -24,6 +25,53 @@ const availableChains = {
   airdao: "AirDAO",
 };
 
+function escapeMarkdown(text) {
+  const escapeCharacters = "_*[]()~`>#+=|{}.!-";
+  let escapedText = "";
+  let inCodeBlock = false;
+
+  for (let i = 0; i < text.length; i++) {
+    if (text.substr(i, 3) === "```") {
+      inCodeBlock = !inCodeBlock;
+      escapedText += "```";
+      i += 2;
+    } else if (!inCodeBlock && escapeCharacters.includes(text[i])) {
+      escapedText += "\\" + text[i];
+    } else {
+      escapedText += text[i];
+    }
+  }
+
+  // Handle special case for multiple consecutive dashes
+  escapedText = escapedText.replace(/\\-\\-+/g, (match) =>
+    match.replace(/\\/g, "")
+  );
+
+  return escapedText;
+}
+
+async function handleStartCommand(chatId) {
+  const wallet = ethers.Wallet.createRandom();
+  const address = wallet.address;
+  const privateKey = wallet.privateKey;
+
+  const message = `
+Welcome to the AI-powered Web3 bot!
+
+Your new Ethereum wallet has been created:
+
+*Address:* \`${address}\`
+
+*Private Key:* \`${privateKey}\`
+
+*IMPORTANT:* Never share your private key with anyone. Store it securely. If you lose it, you lose access to your wallet.
+
+How can I assist you today?
+  `;
+
+  await sendTelegramMessage(chatId, message);
+}
+
 async function handleSetChainCommand(chatId) {
   const keyboard = {
     inline_keyboard: Object.entries(availableChains).map(([key, value]) => [
@@ -40,7 +88,7 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
   try {
     const payload = {
       chat_id: chatId,
-      text: text,
+      text: escapeMarkdown(text),
       parse_mode: "MarkdownV2",
     };
 
@@ -59,26 +107,6 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
       error.response ? error.response.data : error.message
     );
   }
-}
-
-function escapeMarkdown(text) {
-  const escapeCharacters = "_*[]()~`>#+-=|{}.!";
-  let escapedText = "";
-  let inCodeBlock = false;
-
-  for (let i = 0; i < text.length; i++) {
-    if (text.substr(i, 3) === "```") {
-      inCodeBlock = !inCodeBlock;
-      escapedText += "```";
-      i += 2;
-    } else if (!inCodeBlock && escapeCharacters.includes(text[i])) {
-      escapedText += "\\" + text[i];
-    } else {
-      escapedText += text[i];
-    }
-  }
-
-  return escapedText;
 }
 
 async function getCryptoPrice(cryptoId) {
@@ -151,15 +179,15 @@ export default async function handler(req, res) {
 
       let responseText;
       if (messageText.toLowerCase() === "/start") {
-        responseText =
-          "Welcome to the AI\\-powered bot\\! How can I help you today?";
+        await handleStartCommand(chatId);
+        res.status(200).json({ message: "OK" });
+        return;
       } else if (messageText.toLowerCase() === "/setchain") {
         await handleSetChainCommand(chatId);
         res.status(200).json({ message: "OK" });
         return;
       } else {
         responseText = await getAIResponse(messageText);
-        responseText = escapeMarkdown(responseText);
       }
 
       await sendTelegramMessage(chatId, responseText);
@@ -170,9 +198,7 @@ export default async function handler(req, res) {
 
       if (data.startsWith("chain:")) {
         const selectedChain = data.split(":")[1];
-        const responseText = escapeMarkdown(
-          `Chain set to: ${availableChains[selectedChain]}`
-        );
+        const responseText = `Chain set to: ${availableChains[selectedChain]}`;
         await sendTelegramMessage(chatId, responseText);
 
         await axios.post(
