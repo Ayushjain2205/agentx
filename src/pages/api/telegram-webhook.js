@@ -6,6 +6,10 @@ import { ethers } from "ethers";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
+console.log("Starting bot...");
+console.log("BOT_TOKEN set:", !!BOT_TOKEN);
+console.log("OPENAI_API_KEY set:", !!OPENAI_API_KEY);
+
 if (!BOT_TOKEN || !OPENAI_API_KEY) {
   console.error(
     "TELEGRAM_BOT_TOKEN or OPENAI_API_KEY is not set in environment variables"
@@ -26,45 +30,46 @@ const availableChains = {
 };
 
 function escapeMarkdown(text) {
-  const escapeCharacters = "_*[]()~`>#+=|{}.!-";
+  const escapeCharacters = "_*[]()~`>#+-=|{}.!";
   let escapedText = "";
   let inCodeBlock = false;
+  let inBoldOrItalic = false;
 
   for (let i = 0; i < text.length; i++) {
     if (text.substr(i, 3) === "```") {
       inCodeBlock = !inCodeBlock;
       escapedText += "```";
       i += 2;
-    } else if (!inCodeBlock && escapeCharacters.includes(text[i])) {
+    } else if (text[i] === "*" || text[i] === "_") {
+      inBoldOrItalic = !inBoldOrItalic;
+      escapedText += text[i];
+    } else if (
+      !inCodeBlock &&
+      !inBoldOrItalic &&
+      escapeCharacters.includes(text[i])
+    ) {
       escapedText += "\\" + text[i];
     } else {
       escapedText += text[i];
     }
   }
 
-  // Handle special case for multiple consecutive dashes
-  escapedText = escapedText.replace(/\\-\\-+/g, (match) =>
-    match.replace(/\\/g, "")
-  );
-
   return escapedText;
 }
 
 async function handleStartCommand(chatId) {
+  console.log(`Handling /start command for chat ID: ${chatId}`);
   const wallet = ethers.Wallet.createRandom();
-  const address = wallet.address;
-  const privateKey = wallet.privateKey;
-
   const message = `
 Welcome to the AI-powered Web3 bot!
 
-Your new Ethereum wallet has been created:
+A new Ethereum wallet has been created:
 
-*Address:* \`${address}\`
+*Address:* \`${wallet.address}\`
 
-*Private Key:* \`${privateKey}\`
+*Private Key:* \`${wallet.privateKey}\`
 
-*IMPORTANT:* Never share your private key with anyone. Store it securely. If you lose it, you lose access to your wallet.
+*IMPORTANT:* Never share your private key with anyone. Store it securely.
 
 How can I assist you today?
   `;
@@ -72,7 +77,26 @@ How can I assist you today?
   await sendTelegramMessage(chatId, message);
 }
 
+async function handleDockCommand(chatId) {
+  console.log(`Handling /dock command for chat ID: ${chatId}`);
+  const keyboard = {
+    inline_keyboard: [
+      [
+        {
+          text: "Open Mini App",
+          web_app: { url: "https://6853-137-59-187-215.ngrok-free.app" },
+        },
+      ],
+    ],
+  };
+
+  const message = "Click the button below to open the Mini App:";
+
+  await sendTelegramMessage(chatId, message, keyboard);
+}
+
 async function handleSetChainCommand(chatId) {
+  console.log(`Handling /setchain command for chat ID: ${chatId}`);
   const keyboard = {
     inline_keyboard: Object.entries(availableChains).map(([key, value]) => [
       { text: value, callback_data: `chain:${key}` },
@@ -86,6 +110,7 @@ async function handleSetChainCommand(chatId) {
 
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
   try {
+    console.log(`Sending message to chat ID: ${chatId}`);
     const payload = {
       chat_id: chatId,
       text: escapeMarkdown(text),
@@ -109,59 +134,15 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
   }
 }
 
-async function getCryptoPrice(cryptoId) {
-  try {
-    const response = await axios.get(
-      `https://api.coingecko.com/api/v3/simple/price?ids=${cryptoId}&vs_currencies=usd`
-    );
-    const price = response.data[cryptoId].usd;
-    return `The current price of ${cryptoId} is $${price}`;
-  } catch (error) {
-    console.error("Error fetching crypto price:", error);
-    return "Sorry, I couldn't fetch the crypto price at the moment.";
-  }
-}
-
 async function getAIResponse(message) {
+  console.log("Getting AI response for message:", message);
   try {
-    const functions = [
-      {
-        name: "get_crypto_price",
-        description: "Get the current price of a cryptocurrency",
-        parameters: {
-          type: "object",
-          properties: {
-            crypto_id: {
-              type: "string",
-              description:
-                "The ID of the cryptocurrency (e.g., bitcoin, ethereum)",
-            },
-          },
-          required: ["crypto_id"],
-        },
-      },
-    ];
-
     const completion = await openai.chat.completions.create({
       model: "gpt-4",
       messages: [{ role: "user", content: message }],
-      functions: functions,
-      function_call: "auto",
     });
 
-    const responseMessage = completion.choices[0].message;
-
-    if (responseMessage.function_call) {
-      const functionName = responseMessage.function_call.name;
-      const functionArgs = JSON.parse(responseMessage.function_call.arguments);
-
-      if (functionName === "get_crypto_price") {
-        const cryptoPrice = await getCryptoPrice(functionArgs.crypto_id);
-        return cryptoPrice;
-      }
-    }
-
-    return responseMessage.content;
+    return completion.choices[0].message.content;
   } catch (error) {
     console.error("Error getting AI response:", error);
     return "Sorry, I'm having trouble processing your request right now.";
@@ -169,49 +150,63 @@ async function getAIResponse(message) {
 }
 
 export default async function handler(req, res) {
+  console.log("Received request:", req.method);
   if (req.method === "POST") {
     const update = req.body;
-    console.log("Received update from Telegram:", update);
+    console.log(
+      "Received update from Telegram:",
+      JSON.stringify(update, null, 2)
+    );
 
-    if (update.message && update.message.text) {
-      const chatId = update.message.chat.id;
-      const messageText = update.message.text;
+    try {
+      if (update.message && update.message.text) {
+        const chatId = update.message.chat.id;
+        const messageText = update.message.text;
 
-      let responseText;
-      if (messageText.toLowerCase() === "/start") {
-        await handleStartCommand(chatId);
-        res.status(200).json({ message: "OK" });
-        return;
-      } else if (messageText.toLowerCase() === "/setchain") {
-        await handleSetChainCommand(chatId);
-        res.status(200).json({ message: "OK" });
-        return;
-      } else {
-        responseText = await getAIResponse(messageText);
-      }
-
-      await sendTelegramMessage(chatId, responseText);
-    } else if (update.callback_query) {
-      const callbackQuery = update.callback_query;
-      const chatId = callbackQuery.message.chat.id;
-      const data = callbackQuery.data;
-
-      if (data.startsWith("chain:")) {
-        const selectedChain = data.split(":")[1];
-        const responseText = `Chain set to: ${availableChains[selectedChain]}`;
-        await sendTelegramMessage(chatId, responseText);
-
-        await axios.post(
-          `https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,
-          {
-            callback_query_id: callbackQuery.id,
-          }
+        console.log(
+          `Received message "${messageText}" from chat ID: ${chatId}`
         );
-      }
-    }
 
-    res.status(200).json({ message: "OK" });
+        if (messageText.toLowerCase() === "/start") {
+          await handleStartCommand(chatId);
+        } else if (messageText.toLowerCase() === "/setchain") {
+          await handleSetChainCommand(chatId);
+        } else if (messageText.toLowerCase() === "/dock") {
+          await handleDockCommand(chatId);
+        } else {
+          const responseText = await getAIResponse(messageText);
+          await sendTelegramMessage(chatId, responseText);
+        }
+      } else if (update.callback_query) {
+        const callbackQuery = update.callback_query;
+        const chatId = callbackQuery.message.chat.id;
+        const data = callbackQuery.data;
+
+        console.log(
+          `Received callback query with data "${data}" from chat ID: ${chatId}`
+        );
+
+        if (data.startsWith("chain:")) {
+          const selectedChain = data.split(":")[1];
+          const responseText = `Chain set to: *${availableChains[selectedChain]}*`;
+          await sendTelegramMessage(chatId, responseText);
+
+          await axios.post(
+            `https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`,
+            {
+              callback_query_id: callbackQuery.id,
+            }
+          );
+        }
+      }
+
+      res.status(200).json({ message: "OK" });
+    } catch (error) {
+      console.error("Error processing update:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
   } else {
+    console.log(`Received unsupported method: ${req.method}`);
     res.setHeader("Allow", ["POST"]);
     res.status(405).end(`Method ${req.method} Not Allowed`);
   }
